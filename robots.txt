@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://henrik.verkist.com/sitemap.xml

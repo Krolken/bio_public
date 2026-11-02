@@ -58,6 +58,11 @@
 
   const hiddenStorageKey = 'henrik-verkist-cv-hidden-v1';
   const orderStorageKey = 'henrik-verkist-cv-order-v1';
+  const titleStorageKey = 'henrik-verkist-cv-title-v1';
+  const title = cv.querySelector('[data-cv-title]');
+  const restoreButton = cv.querySelector('[data-cv-restore]');
+  const defaultTitle = title.textContent;
+  const normaliseTitle = value => value.replace(/\s+/g, ' ').trim() || defaultTitle;
   const readJson = (key, fallback) => {
     try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
     catch { return fallback; }
@@ -70,8 +75,12 @@
     try { localStorage.removeItem(key); }
     catch { /* Ignore storage failures. */ }
   };
-  let hidden = new Set(readJson(hiddenStorageKey, []));
-  let order = readJson(orderStorageKey, {});
+  const storedHidden = readJson(hiddenStorageKey, []);
+  const storedOrder = readJson(orderStorageKey, {});
+  const storedTitle = readJson(titleStorageKey, defaultTitle);
+  const hidden = new Set(Array.isArray(storedHidden) ? storedHidden.filter(key => typeof key === 'string') : []);
+  let order = storedOrder && typeof storedOrder === 'object' && !Array.isArray(storedOrder) ? storedOrder : {};
+  title.textContent = typeof storedTitle === 'string' ? normaliseTitle(storedTitle) : defaultTitle;
   let dragState = null;
   let suppressClick = false;
   const sortableContainers = [...cv.querySelectorAll('[data-cv-sortable]')];
@@ -83,11 +92,12 @@
     writeJson(orderStorageKey, order);
   };
   const reorderContainer = (container, keys = []) => {
+    if (!Array.isArray(keys)) keys = [];
     const items = [...container.querySelectorAll('[data-cv-draggable]')];
     const byKey = new Map(items.map(item => [item.dataset.cvKey, item]));
     const seen = new Set();
     const ordered = [];
-    for (const key of keys) if (byKey.has(key)) {
+    for (const key of keys) if (byKey.has(key) && !seen.has(key)) {
       ordered.push(byKey.get(key));
       seen.add(key);
     }
@@ -98,15 +108,27 @@
     for (const container of sortableContainers) reorderContainer(container, order[container.dataset.cvSortable] || defaultOrders.get(container.dataset.cvSortable));
   };
   const applyHidden = () => {
-    cv.querySelectorAll('[data-cv-key]').forEach(item => item.classList.toggle('cv-hidden', hidden.has(item.dataset.cvKey)));
+    let count = 0;
+    cv.querySelectorAll('[data-cv-key]').forEach(item => {
+      const isHidden = hidden.has(item.dataset.cvKey);
+      item.classList.toggle('cv-hidden', isHidden);
+      if (isHidden) count++;
+    });
+    restoreButton.disabled = count === 0;
+    restoreButton.textContent = count ? `Restore hidden (${count})` : 'Restore hidden';
+  };
+  const restoreHidden = () => {
+    hidden.clear();
+    removeJson(hiddenStorageKey);
+    applyHidden();
   };
   const resetCustomisation = () => {
-    hidden = new Set();
+    restoreHidden();
     order = {};
-    removeJson(hiddenStorageKey);
     removeJson(orderStorageKey);
+    removeJson(titleStorageKey);
+    title.textContent = defaultTitle;
     for (const container of sortableContainers) reorderContainer(container, defaultOrders.get(container.dataset.cvSortable));
-    applyHidden();
   };
   const dragAfterElement = (container, y) => [...container.querySelectorAll('[data-cv-draggable]:not(.cv-dragging):not(.cv-hidden)')]
     .reduce((closest, child) => {
@@ -128,6 +150,24 @@
     dragState = null;
   };
 
+  // Keep recovery controls independent of the click suppression used after dragging.
+  restoreButton.addEventListener('click', restoreHidden);
+  cv.querySelector('[data-cv-reset]').addEventListener('click', resetCustomisation);
+  cv.querySelector('[data-cv-print]').addEventListener('click', () => {
+    title.textContent = normaliseTitle(title.textContent);
+    window.print();
+  });
+  title.addEventListener('input', () => writeJson(titleStorageKey, normaliseTitle(title.textContent)));
+  title.addEventListener('blur', () => {
+    title.textContent = normaliseTitle(title.textContent);
+    writeJson(titleStorageKey, title.textContent);
+  });
+  title.addEventListener('keydown', event => {
+    if (event.key !== 'Enter' || event.isComposing) return;
+    event.preventDefault();
+    title.blur();
+  });
+
   cv.addEventListener('click', event => {
     if (suppressClick) {
       event.preventDefault();
@@ -144,15 +184,10 @@
       }
       return;
     }
-    if (event.target.closest('[data-cv-reset]')) {
-      resetCustomisation();
-      return;
-    }
-    if (event.target.closest('[data-cv-print]')) window.print();
   });
 
   cv.addEventListener('pointerdown', event => {
-    if (event.button !== 0 || event.target.closest('button,a,input,textarea,select')) return;
+    if (event.button !== 0 || event.target.closest('button,a,input,textarea,select,[contenteditable]')) return;
     const item = event.target.closest('[data-cv-draggable]');
     const container = item?.closest('[data-cv-sortable]');
     if (!item || !container) return;
